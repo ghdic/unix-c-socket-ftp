@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+int read_handling(int socket);
 void error_handling(char* msg);
 
 int main(int argc, char* argv[]) {
@@ -28,10 +29,16 @@ int main(int argc, char* argv[]) {
 	
 		
 	char command[1024] = {0x00, };
+	char buf[1024] = {0x00, };
 	int readResult = 1;
 
+	// 최초 연결시 경로 출력
+	read(client_sock, buf, sizeof(buf));
+	read(client_sock, buf, sizeof(buf));
+	printf("%s", buf);
 	while(1) {
 		fgets(command, sizeof(command), stdin);
+		command[strlen(command) - 1] = '\0'; // \n 엔터버퍼 지우기
 
 		if(strcmp(command, "quit") == 0)
 			break;
@@ -39,14 +46,16 @@ int main(int argc, char* argv[]) {
 		if(write(client_sock, command, sizeof(command)) == -1)
 			error_handling("write error");
 		
-		if(read_handling(client_sock) == -1) // 상대측 연결이 끊긴경우
+		if(read_handling(client_sock) == -1) { // 상대측 연결이 끊긴경우
+			printf("disconnected from server\n");
 			break;
+		}
 	}
 	close(client_sock);
 	return 0;
 }
 
-void read_handling(int socket) {
+int read_handling(int socket) {
 	char message[1024] = {0x00, };
 	char user_info[1024] = {0x00, };
 
@@ -56,7 +65,7 @@ void read_handling(int socket) {
 		if(readResult == -1)
 			error_handling("read error");
 		if(readResult == 0) // 상대가 연결을 끊을 경우 read 0bytes
-			return -1
+			return -1;
 		if(strcmp(message, ":EOF") == 0) // 모든 데이터를 다 받으면 :EOF 메세지를 보냄
 			break;
 	
@@ -64,6 +73,7 @@ void read_handling(int socket) {
 	}
 	read(socket, user_info, sizeof(user_info));
 	printf("%s", user_info);
+	return 0;
 }
 
 void error_handling(char* msg) {

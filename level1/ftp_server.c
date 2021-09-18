@@ -1,15 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h> // atoi
 #include <string.h> // memset
-#include <direct.h>	//chdir
-#include <unistd.h> // sockaddr_in, read, write
+#include <unistd.h> // sockaddr_in, read, write, chdir
 #include <sys/socket.h>
 #include <arpa/inet.h> // htonl, htons, INADDR_ANY, sockaddr_in
 #include <sys/utsname.h> // uname
 #include <pwd.h> // username
+#include <errno.h>
 
+const char* getUserName();
 void eof_handling(char* path, int socket);
-void popen_handling(char* msg, char* path, int socket)
+void popen_handling(char* msg, char* path, int socket);
 void error_handling(char* msg);
 char* substr(int s, int e, char *str);
 
@@ -20,7 +21,8 @@ int main(int argc, char* argv[]) {
 	int port = atoi(argv[1]);
 	int server_sock;
 	int client_sock;
-	char cur_path[1024] = "~"; // 시작 위치는 home
+	char cur_path[1024] = {0x00, }; // 프로세스 시작 위치로 시작
+	getcwd(cur_path, sizeof(cur_path));
 	
 	// sockaddr_in은 소켓 주소의 틀, AF_INET인 경우 사용
 	struct sockaddr_in server_addr;
@@ -53,6 +55,8 @@ int main(int argc, char* argv[]) {
 	char msg[1024] = {0x00, };
 	char buf[1024] = {0x00, };
 	int msg_len = -1;
+
+	eof_handling(cur_path, client_sock); // 최초 연결시 경로 보냄
 	while((msg_len = read(client_sock, msg, sizeof(msg))) != 0) { // 연결 끊기면 0byte 반환함
 		
 		char * const sep_at = strchr(msg, ' '); // strtok 사용하지 않는 이유는 파일 경로에 공백이 있을 수도 있기 때문
@@ -61,8 +65,11 @@ int main(int argc, char* argv[]) {
 		
 		if(strcmp(msg, "cd") == 0) {
 			char *path = sep_at + 1;
+			if(strcmp(path, "~") == 0) {
+				snprintf(path, sizeof(path), "/%s", getUserName());
+			}
 			if(chdir(path) == -1) {
-				fprintf(buf, "bash: cd: %s: %s\n", path, strerror(errno));
+				snprintf(buf, sizeof(buf), "bash: cd: %s: %s\n", path, strerror(errno));
 				write(client_sock, buf, sizeof(buf));
 			}
 			getcwd(cur_path, sizeof(cur_path));
@@ -83,6 +90,7 @@ int main(int argc, char* argv[]) {
 		// 메세지 보낸게 끝났다는 EOF처리 & 마무리
 		eof_handling(cur_path, client_sock);
 	}
+	printf("disconnected from client : %d", client_sock);
 	
 	close(client_sock);
 	close(server_sock);
@@ -90,8 +98,7 @@ int main(int argc, char* argv[]) {
 	return 0;
 }
 
-const char* getUserName()
-{
+const char* getUserName() {
 	uid_t uid = geteuid();
 	struct passwd *pw = getpwuid(uid);
 	if (pw) {
@@ -106,7 +113,7 @@ void eof_handling(char* path, int socket) {
 	struct utsname info;
 
 	// 메세지 전부 보냈다는 것을 알림
-	fprintf(buf, ":EOF");
+	snprintf(buf, sizeof(buf), ":EOF");
 	write(socket, buf, sizeof(buf));
 
 	// 현재 유저명 & 경로를 보내줌
@@ -114,7 +121,7 @@ void eof_handling(char* path, int socket) {
 		error_handling("uname error");
 	}
 
-	fprintf(buf, "%s@%s:%s# ", getUserName(), info.nodename, path);
+	snprintf(buf, sizeof(buf), "%s@%s:%s# ", getUserName(), info.nodename, path);
 	write(socket, buf, sizeof(buf));
 }
 
@@ -124,7 +131,7 @@ void popen_handling(char* msg, char* path, int socket) {
 	
 	chdir(path); // 매번 이렇게 루트 위치를 옮겨줘야 되나? popen이 fork로 하위 프로세스 만들어서 하는건데 유지안되나?..
 	
-	fp = ppopen(msg, 'r');
+	fp = popen(msg, "r");
 	if(fp == NULL)
 		error_handling("popen error");
 	

@@ -10,7 +10,7 @@ void error_handling(char* msg);
 int main(int argc, char* argv[]) {
 	int client_sock;
 	struct sockaddr_in server_addr;
-	char message[1024] = {0x00, };
+	
 	
 	client_sock = socket(PF_INET, SOCK_STREAM, 0);
 	if(client_sock == -1)
@@ -28,29 +28,43 @@ int main(int argc, char* argv[]) {
 	
 		
 	char command[1024] = {0x00, };
-	fgets(command, sizeof(command), stdin);
-	
-	if(write(client_sock, command, sizeof(command)) == -1)
-		error_handling("write error");
-	
+	int readResult = 1;
+
 	while(1) {
-		int readResult = read(client_sock, message, sizeof(message));
+		fgets(command, sizeof(command), stdin);
+
+		if(strcmp(command, "quit") == 0)
+			break;
 		
-		if(readResult == -1)
-			error_handling("read error");
-		if(readResult == 0)
+		if(write(client_sock, command, sizeof(command)) == -1)
+			error_handling("write error");
+		
+		if(read_handling(client_sock) == -1) // 상대측 연결이 끊긴경우
 			break;
-		if(strcmp(message, ":EOF") == 0)
-			break;
-	
-		printf("%s", message);
 	}
-	
 	close(client_sock);
 	return 0;
 }
 
+void read_handling(int socket) {
+	char message[1024] = {0x00, };
+	char user_info[1024] = {0x00, };
 
+	while(1) {
+		int readResult = read(socket, message, sizeof(message));
+		
+		if(readResult == -1)
+			error_handling("read error");
+		if(readResult == 0) // 상대가 연결을 끊을 경우 read 0bytes
+			return -1
+		if(strcmp(message, ":EOF") == 0) // 모든 데이터를 다 받으면 :EOF 메세지를 보냄
+			break;
+	
+		printf("%s", message);
+	}
+	read(socket, user_info, sizeof(user_info));
+	printf("%s", user_info);
+}
 
 void error_handling(char* msg) {
 	fputs(msg, stderr);

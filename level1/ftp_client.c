@@ -52,6 +52,7 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	close(client_sock);
+	
 	return 0;
 }
 

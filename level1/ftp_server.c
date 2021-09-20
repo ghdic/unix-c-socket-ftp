@@ -7,9 +7,11 @@
 #include <sys/utsname.h> // uname
 #include <pwd.h> // username
 #include <errno.h>
+#include <fcntl.h> // open
 
 const char* getUserName();
-
+void file_download(char* filename, int sock, int port);
+void file_upload(char* filename, int sock, int port);
 void process_commend(int sock, int port);
 void eof_handling(char* path, int sock);
 void popen_handling(char* msg, char* path, int sock);
@@ -66,7 +68,7 @@ const char* getUserName() {
 // client -> server
 void file_download(char* filename, int sock, int port) {
 	FILE* fp;
-	int data_sock, data_port = port + 10000, msg_len = -1;
+	int data_sock, data_port = port + 10000;
 	char buf[1024] = {0x00, };
 
 	if((fp = oepn(filename, "w")) == NULL) {
@@ -96,7 +98,7 @@ void file_download(char* filename, int sock, int port) {
 		error_manage(data_sock);
 	}
 
-	while((msg_len = read(data_sock, buf, sizeof(buf))) != 0) {
+	while(read(data_sock, buf, sizeof(buf)) != 0) {
 		if(strcmp(buf, ":DONE") == 0) break;
 		fwrite(buf, sizeof(char), sizeof(buf)/sizeof(char), fp);
 	}
@@ -106,20 +108,54 @@ void file_download(char* filename, int sock, int port) {
 }
 
 // server -> client
-void file_upload() {
+void file_upload(char* filename, int sock, int port) {
+	int fd;
+	int data_sock, data_port = port + 10000;
+	char buf[1024] = {0x00, };
 
+	if((fd = open(filename, O_RDONLY)) == -1) {
+		snprintf(buf, sizeof(buf), ":ERROR %s", strerror(errno));
+		write(sock, buf, sizeof(buf));
+		return;
+	}
+	
+	
+
+	data_sock = create_socket(data_port);
+
+	while(1) {
+		if(data_sock < 0) {
+			if(data_sock == BIND_ERROR) {
+				data_port += 1; // BIND_ERROR시 이미 해당 포트를 사용하고 있기 때문에 다른 포트를 할당
+			} else {
+				error_manage(data_sock);
+			}
+		} else {
+			break;
+		}
+	}
+
+	snprintf(buf, sizeof(buf), ":PORT %d", data_port);
+	write(sock, buf, sizeof(buf));
+
+	while(read(fd, buf, sizeof(buf)) != 0) {
+		write(data_sock, buf, sizeof(buf));
+	}
+
+	write(data_sock, ":DONE", 6);
+	close(fd);
+	close(data_sock);
 }
 
 void process_commend(int sock, int port) {
 	char cur_path[1024] = {0x00, };
 	char msg[1024] = {0x00, };
 	char buf[1024] = {0x00, };
-	int msg_len = -1;
 
 	snprintf(cur_path, sizeof(cur_path), "/%s", getUserName());
 
 	eof_handling(cur_path, sock); // 최초 연결시 경로 보냄
-	while((msg_len = read(sock, msg, sizeof(msg))) != 0) { // 연결 끊기면 0byte 반환함
+	while(read(sock, msg, sizeof(msg)) != 0) { // 연결 끊기면 0byte 반환함
 		
 		char * const sep_at = strchr(msg, ' '); // strtok 사용하지 않는 이유는 파일 경로에 공백이 있을 수도 있기 때문
 		if(sep_at != NULL) // 공백이 있는 포인터인 sep_at 기준으로 문자열 분리

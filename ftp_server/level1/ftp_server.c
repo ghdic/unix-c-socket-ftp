@@ -9,6 +9,16 @@
 #include <errno.h>
 #include <fcntl.h> // open
 
+enum ERROR{
+	DEFAULT_ERROR = -1,
+	SOCKET_ERROR = -2,
+	BIND_ERROR = -3,
+	LISTEN_ERROR = -4,
+	ACCEPT_ERROR = -5,
+	POPEN_ERROR = -6,
+	UNAME_ERROR = -7
+};
+
 const char* getUserName();
 void file_download(char* filename, int sock, int port);
 void file_upload(char* filename, int sock, int port);
@@ -20,16 +30,6 @@ void error_manage(enum ERROR error);
 char* substr(int s, int e, char *str);
 int create_socket(int port);
 int accept_conn(int sock);
-
-enum ERROR{
-	DEFAULT_ERROR = -1,
-	SOCKET_ERROR = -2,
-	BIND_ERROR = -3,
-	LISTEN_ERROR = -4,
-	ACCEPT_ERROR = -5,
-	POPEN_ERROR = -6,
-	UNAME_ERROR = -7
-};
 
 int main(int argc, char* argv[]) {
 	int port;
@@ -71,7 +71,7 @@ void file_download(char* filename, int sock, int port) {
 	int data_sock, data_port = port + 10000;
 	char buf[1024] = {0x00, };
 
-	if((fp = oepn(filename, "w")) == NULL) {
+	if((fp = fopen(filename, "w")) == NULL) {
 		snprintf(buf, sizeof(buf), ":ERROR %s", strerror(errno));
 		write(sock, buf, sizeof(buf));
 		return;
@@ -109,11 +109,11 @@ void file_download(char* filename, int sock, int port) {
 
 // server -> client
 void file_upload(char* filename, int sock, int port) {
-	int fd;
+	FILE* fp;
 	int data_sock, data_port = port + 10000;
 	char buf[1024] = {0x00, };
 
-	if((fd = open(filename, O_RDONLY)) == -1) {
+	if((fp = fopen(filename, "r")) == NULL) {
 		snprintf(buf, sizeof(buf), ":ERROR %s", strerror(errno));
 		write(sock, buf, sizeof(buf));
 		return;
@@ -138,12 +138,13 @@ void file_upload(char* filename, int sock, int port) {
 	snprintf(buf, sizeof(buf), ":PORT %d", data_port);
 	write(sock, buf, sizeof(buf));
 
-	while(read(fd, buf, sizeof(buf)) != 0) {
+	while(feof(fp) == 0) {
+		fgets(buf, sizeof(buf), fp);
 		write(data_sock, buf, sizeof(buf));
 	}
 
 	write(data_sock, ":DONE", 6);
-	close(fd);
+	fclose(fp);
 	close(data_sock);
 }
 
@@ -157,7 +158,7 @@ void process_commend(int sock, int port) {
 	eof_handling(cur_path, sock); // 최초 연결시 경로 보냄
 	while(read(sock, msg, sizeof(msg)) != 0) { // 연결 끊기면 0byte 반환함
 		
-		char * const sep_at = strchr(msg, ' '); // strtok 사용하지 않는 이유는 파일 경로에 공백이 있을 수도 있기 때문
+		char * const sep_at = strchr(msg, ' '); // strtok 사용하지 않는 이유는 문자열 복구가 이게 더 간단
 		if(sep_at != NULL) // 공백이 있는 포인터인 sep_at 기준으로 문자열 분리
 			*sep_at = '\0';
 		

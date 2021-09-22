@@ -39,6 +39,26 @@ int main(int argc, char* argv[]) {
         write(client_sock, buf, sizeof(buf));
     }
 
+	// == 쓰레드를 사용하지 않을 경우
+	/*
+	fd_set read_fds; // 읽기 감지
+	FD_ZERO(&read_fds); // 비우고
+	FD_SET(server_sock, &read_fds); // 소켓 그룹 형성, 해당 비트가 0 -> 1
+	for(int i = 0; i < 5; i++) // 연결된 클라이언트들
+		FD_SET(client_sock, &read_fds);
+
+	// 이벤트가 발생한 비트만 1로 남김
+	select(6, &read_fds, NULL, NULL, NULL); // (그룹원 수[그 이상 비트는 확인x], fd_set, ...) fd_set값 변화
+		
+	if(FD_ISSET(server_sock, &read_fds)) { // accept 요청이 들어왔나?
+
+	}
+
+	if(FD_ISSET(client_sock, &read_fds)) { // 클라이언트로부터 메세지가 도착했나?
+
+	}
+	*/
+
     close(client_sock);
     close(server_sock);
 

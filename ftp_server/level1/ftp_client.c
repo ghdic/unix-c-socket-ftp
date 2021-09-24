@@ -170,7 +170,8 @@ void popen_handling(char* msg) {
 	FILE* fp = NULL;
 	char buf[BUFFER_SIZE] = {0x00, };
 
-	fp = popen(msg, "r");
+	snprintf(buf, BUFFER_SIZE, "%s 2>&1", msg); // stderr -> stdout으로 디스크립터 옮겨 에러내용도 전달가능하게 
+	fp = popen(buf, "r");
 	if(fp == NULL)
 		error_handling("popen error");
 	

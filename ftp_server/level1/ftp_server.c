@@ -85,11 +85,11 @@ void file_download(char* filepath, int sock) {
 
 	if((fp = fopen(filename, "w")) == NULL) {
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 		return;
 	} else {
 		snprintf(buf, BUFFER_SIZE, ":SUCCESS");
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 	read(sock, buf, BUFFER_SIZE);
@@ -143,11 +143,11 @@ void file_upload(char* filepath, int sock) {
 
 	if((fp = fopen(filepath, "r")) == NULL) {
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 		return;
 	} else {
 		snprintf(buf, BUFFER_SIZE, ":SUCCESS");
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 	read(sock, buf, BUFFER_SIZE);
@@ -181,12 +181,12 @@ void file_upload(char* filepath, int sock) {
 	rewind(fp);
 
 	snprintf(buf, BUFFER_SIZE, "%d %d", file_size, num_bulk);
-	write(sock, buf, BUFFER_SIZE);
+	write(sock, buf, strlen(buf));
 
 	// while(feof(fp) == 0) {
 	for(int i = 0; i < num_bulk; i++) {
 		fread(buf, sizeof(char), BUFFER_SIZE, fp);
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 
@@ -219,7 +219,7 @@ void process_commend(int sock, int port) {
 			}
 			if(chdir(path) == -1) {
 				snprintf(buf, BUFFER_SIZE, "bash: cd: %s: %s\n", path, strerror(errno));
-				write(sock, buf, BUFFER_SIZE);
+				write(sock, buf, strlen(buf));
 			}
 			getcwd(cur_path, sizeof(cur_path));
 		} else if(strcmp(msg, "put") == 0) {
@@ -248,7 +248,7 @@ void eof_handling(char* path, int sock) {
 
 	// 메세지 전부 보냈다는 것을 알림
 	snprintf(buf, BUFFER_SIZE, ":EOF");
-	write(sock, buf, BUFFER_SIZE);
+	write(sock, buf, strlen(buf));
 
 	// 현재 유저명 & 경로를 보내줌
 	if(uname(&info) == -1) {
@@ -256,7 +256,7 @@ void eof_handling(char* path, int sock) {
 	}
 
 	snprintf(buf, BUFFER_SIZE, "%s@%s:%s# ", getUserName(), info.nodename, path);
-	write(sock, buf, BUFFER_SIZE);
+	write(sock, buf, strlen(buf));
 }
 
 void popen_handling(char* msg, int sock) {
@@ -268,10 +268,10 @@ void popen_handling(char* msg, int sock) {
 	if(fp == NULL) {
 		// error_manage(POPEN_ERROR);
 		snprintf(buf, BUFFER_SIZE, "%s\n", strerror(errno));
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	} else {
 		while(fgets(buf, BUFFER_SIZE, fp)) {
-			write(sock, buf, BUFFER_SIZE);
+			write(sock, buf, strlen(buf));
 		}
 	}
 	

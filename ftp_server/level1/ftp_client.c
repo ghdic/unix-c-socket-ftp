@@ -89,24 +89,24 @@ int main(int argc, char* argv[]) {
 		} else if(strcmp(command, "get") == 0) {
 			char* file_path = sep_at +1;
 			if(sep_at != NULL) *sep_at = ' ';
-			if(write(client_sock, command, sizeof(command)) == -1)
+			if(write(client_sock, command, strlen(command)) == -1)
 				error_handling("write error");
 			file_download(file_path, client_sock);
 		} else if(strcmp(command, "put") == 0) {
 			char* file_path = sep_at +1;
 			if(sep_at != NULL) *sep_at = ' ';
-			if(write(client_sock, command, sizeof(command)) == -1)
+			if(write(client_sock, command, strlen(command)) == -1)
 				error_handling("write error");
 			file_upload(file_path, client_sock);
 		} else {
 			if(sep_at != NULL) *sep_at = ' ';
 			if(command[0] == '!') {
-				strncpy(command, command + 1, sizeof(command) - 1);
+				strncpy(command, command + 1, strlen(command + 1));
 				popen_handling(command);
 				printf("%s", server_path);
 				continue;
 			} else {
-				if(write(client_sock, command, sizeof(command)) == -1)
+				if(write(client_sock, command, strlen(command)) == -1)
 					error_handling("write error");
 			}
 		}
@@ -161,7 +161,7 @@ void cd(char* path, char* cur_path, int sock) {
 	if(chdir(path) == -1) {
 		char buf[1024];
 		snprintf(buf, BUFFER_SIZE, "bash: cd: %s: %s\n", path, strerror(errno));
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 	getcwd(cur_path, sizeof(cur_path));
 }
@@ -205,11 +205,11 @@ void file_download(char* filepath, int sock) {
 	if((fp = fopen(filename, "w")) == NULL) {
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		printf("%s\n", buf);
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 		return;
 	} else {
 		snprintf(buf, BUFFER_SIZE, ":SUCCESS");
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 	read(sock, buf, BUFFER_SIZE);
@@ -244,11 +244,11 @@ void file_upload(char* filepath, int sock) {
 	if((fp = fopen(filepath, "r")) == NULL) {
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		printf("%s\n", buf);
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 		return;
 	} else {
 		snprintf(buf, BUFFER_SIZE, ":SUCCESS");
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 	fseek (fp, 0, SEEK_END);
@@ -257,13 +257,13 @@ void file_upload(char* filepath, int sock) {
 	rewind(fp);
 
 	snprintf(buf, BUFFER_SIZE, "%d %d", file_size, num_bulk);
-	write(sock, buf, BUFFER_SIZE);
+	write(sock, buf, strlen(buf));
 
 	// while(feof(fp) == 0) {
 	for(int i = 0; i < num_bulk; i++) {
 		printf("Processing: %0.2lf%%\n", 100.0 * i / num_bulk);
 		fread(buf, sizeof(char), BUFFER_SIZE, fp);
-		write(sock, buf, BUFFER_SIZE);
+		write(sock, buf, strlen(buf));
 	}
 
 	printf("Processing: 100%%\n");

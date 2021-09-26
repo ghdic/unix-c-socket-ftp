@@ -10,6 +10,7 @@
 #include <fcntl.h> // open
 
 #define BUFFER_SIZE 1024
+#define CLIENT_MAX 4
 
 enum ERROR{
 	DEFAULT_ERROR = -1,
@@ -21,6 +22,7 @@ enum ERROR{
 	UNAME_ERROR = -7
 };
 
+void fd_manager();
 const char* getUserName();
 void file_download(char* filepath, int sock);
 void file_upload(char* filepath, int sock);
@@ -32,6 +34,7 @@ void error_manage(enum ERROR error);
 char* substr(int s, int e, char *str);
 int create_socket(uint16_t port);
 int accept_conn(int sock);
+void help();
 
 int main(int argc, char* argv[]) {
 	uint16_t port;
@@ -58,6 +61,70 @@ int main(int argc, char* argv[]) {
 	close(server_sock);
 	
 	return 0;
+}
+
+void fd_manager(int server_sock) {
+	int fd_max = 0;
+	int stdinfd = fileno(stdin);
+	fd_set read_fds, temp_fds; // 읽기 감지
+	int client_num = 0; // 연결된 클라이언트 수
+	int client_fds[CLIENT_MAX]; // 참가 클라이언트들의 소켓번호
+	int select_fd = 0; // 현재 선택중인 fd
+
+	int buf[BUFFER_SIZE];
+
+	FD_ZERO(&read_fds);
+	FD_SET(server_sock, &read_fds);
+	FD_SET(stdinfd, &read_fds);
+
+	fd_max = server_sock + 1;
+
+	while(1) {
+
+		temp_fds = read_fds;
+		if(select(fd_max + 1, &temp_fds, 0, 0, 0) == -1) { // 가장 큰 파일디스크립터 + 1, 
+			error_handling("Select Error");
+		}
+
+		if(FD_ISSET(server_sock, &temp_fds)) { // 클라이언트로부터 연결 요청이 들어온 경우
+			int client_sock = accept_conn(server_sock);
+			
+			if(client_num < CLIENT_MAX) {
+				if(client_num == 0) select_fd = client_sock;
+				FD_SET(client_sock, &read_fds);
+				fd_max = fd_max > client_sock ? fd_max:client_sock;
+				client_fds[client_num++] = client_sock;
+			} else { // listen쪽에서 어차피 넘으면 더 안받지 않으려나..?
+				printf("Connected Client Number is OverFlow!!\n");
+				close(client_sock);
+			}
+		}
+
+		if(FD_ISSET(stdinfd, &temp_fds)) { // stdin 입력이 들어온 경우
+			// 커맨드 처리하는 로직
+		}
+
+		for(int i = 0; i < client_num; i++) {
+			int fd = client_fds[i];
+			if(FD_ISSET(fd, &temp_fds)) {
+				if(read(fd, buf, BUFFER_SIZE) == 0) { // 연결이 끊겼을 때
+					FD_CLR(fd, &read_fds);
+					close(fd);
+					client_num--;
+					for(int j = i; j < client_num; j++)
+						client_fds[j] = client_fds[j + 1];
+					
+					if(select_fd == fd) select_fd = 0;
+					printf("Disconnected Clinet : %d", fd);
+					fd--; // 하나가 줄었기 때문에 반복문 제대로 돌기 위해 줄여줌
+					
+				} else {
+					// 입력받은것 처리하는 로직
+				}
+			}
+		}
+	}
+
 }
 
 const char* getUserName() {
@@ -328,7 +395,7 @@ int create_socket(uint16_t port) {
 	if(bind(listenfd, (struct sockaddr*) &server_addr, sizeof(server_addr)) == -1)
 		return BIND_ERROR;
 		
-	if(listen(listenfd, 1) == -1)
+	if(listen(listenfd, CLIENT_MAX) == -1)
 		return LISTEN_ERROR;
 
 	return listenfd;
@@ -348,4 +415,20 @@ int accept_conn(int sock) {
 	printf("Connect Client: %d\n", connfd);
 
 	return connfd;
+}
+
+void help() {
+	printf("\
+\n\n\
+=========================================================\n\
+!help: 사용 가능한 명령어 리스트를 출력한다\n\
+quit: 클라이언트를 종료한다\n\
+select [소켓 FD번호]: 현재 연결중인 소켓 FD번호를 입력해 통신을 주고 받을 클라이언트를 선택한다\n\
+connect: 현재 연결되어 있는 소켓 FD번호를 출력한다\n\
+get [서버 파일경로]: 서버로부터 해당 파일을 현재 로컬경로에 다운받는다\n\
+put [클라이언트 파일경로]: 클라이언트로부터 해당 파일을 현재 서버경로에 다운받는다\n\
+![명령어]: 로컬에서 커맨드 명령을 수행한다\n\
+[명령어]: 서버에서 커맨드 명령을 수행한다\n\
+=========================================================\n\
+\n\n");
 }

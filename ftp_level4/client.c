@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -17,8 +18,9 @@
 #include <pwd.h> // username
 #include <dirent.h>
 
-#define BUFSIZE 65535
-#define BUFFER_SIZE 1024
+// Optimized buffer sizes for better performance
+#define BUFSIZE 8192        // Reduced from 65535 for better memory usage
+#define BUFFER_SIZE 8192    // Increased from 1024 for better I/O throughput
 #define MAXSOCK 128
 #define IPNum "127.0.0.1" //Server IP 주소
 
@@ -36,6 +38,20 @@ int read_data(int sock, char* buffer, uint32_t required);
 int write_data(int fd, const char *buffer, uint32_t required);
 void file_download(char* filepath, int sock);
 void file_upload(char* filepath, int sock);
+static inline void set_socket_options(int sock);
+
+// Socket optimization function
+static inline void set_socket_options(int sock) {
+	int opt = 1;
+	int bufsize = 65536;
+	
+	// Enable TCP_NODELAY for lower latency
+	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+	
+	// Set send and receive buffer sizes
+	setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+	setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+}
 
 int main(int argc, char * argv[])
 {
@@ -74,6 +90,9 @@ int main(int argc, char * argv[])
 		perror("connect() error");
 		exit(1);
 	}
+	
+	// Optimize client socket
+	set_socket_options(sock);
 	
 	printf("FTP Server connected!\n");
 	
@@ -284,10 +303,10 @@ int write_data(int fd, const char *buffer, uint32_t required) {
 }
 
 
-// server -> client
+// server -> client - Optimized version
 void file_download(char* filepath, int sock) {
 	FILE* fp;
-	char buf[BUFFER_SIZE] = {0x00, };
+	static char buf[BUFFER_SIZE];  // Static to avoid stack allocation
 	char* bp, *filename;
 
 	filename = strrchr(filepath, '/'); // '/'의 마지막 위치, 없으면 NULL반환 파일명만 빼냄
@@ -304,7 +323,7 @@ void file_download(char* filepath, int sock) {
 		return;
 	}
 
-	if((fp = fopen(filename, "w")) == NULL) {
+	if((fp = fopen(filename, "wb")) == NULL) {  // Binary mode for better performance
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		printf("%s\n", buf);
 		write_data(sock, buf, BUFFER_SIZE);
@@ -314,41 +333,51 @@ void file_download(char* filepath, int sock) {
 		write_data(sock, buf, BUFFER_SIZE);
 	}
 
+	// Set file buffer for better I/O performance
+	setvbuf(fp, NULL, _IOFBF, BUFFER_SIZE);
+
 	read_data(sock, buf, BUFFER_SIZE);
 	uint32_t file_size, size = 0, len; // 최대 4GB
 	int check = 0;
 	sscanf(buf, "%d", &file_size);
 
-	while(1) {
+	uint32_t last_progress = 0;
+	while(size < file_size) {
 		uint32_t readable = (file_size - size) > BUFFER_SIZE ? BUFFER_SIZE : (file_size - size);
 		if((len = read(sock, buf, readable)) > 0) {
-			printf("Processing: %0.2lf%%\n", 100.0 * size / file_size);
-			fwrite(buf, sizeof(char), len, fp);
-			size += len;
-			if(size == file_size) {
-				check = 1;
+			// Show progress less frequently for better performance
+			uint32_t progress = (size * 100) / file_size;
+			if(progress != last_progress && progress % 10 == 0) {
+				printf("Processing: %d%%\n", progress);
+				last_progress = progress;
+			}
+			if(fwrite(buf, 1, len, fp) != len) {
+				fprintf(stderr, "Write error\n");
 				break;
 			}
+			size += len;
 		} else if(len == 0) {
 			check = 1;
 			break;
 		} else {
 			if(errno == EINTR) continue;
-			else break; // Error 따로 처리안해주겠음
+			else break;
 		}
 	}
-	if(check)
+	if(size == file_size) {
+		check = 1;
 		printf("Processing: 100%%\n");
-	else
+	} else {
 		printf("File Download incomplete from unknown error\n");
+	}
 	printf("Download File Size: %d bytes, File Name: %s\n", size, filename);
 	fclose(fp);
 }
 
-// client -> server
+// client -> server - Optimized version
 void file_upload(char* filepath, int sock) {
 	FILE* fp;
-	char buf[BUFFER_SIZE] = {0x00, };
+	static char buf[BUFFER_SIZE];  // Static to avoid stack allocation
 
 	char* bp;
 	read_data(sock, buf, BUFFER_SIZE);
@@ -359,7 +388,7 @@ void file_upload(char* filepath, int sock) {
 		return;
 	}
 	
-	if((fp = fopen(filepath, "r")) == NULL) {
+	if((fp = fopen(filepath, "rb")) == NULL) {  // Binary mode for better performance
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		printf("%s\n", buf);
 		write_data(sock, buf, BUFFER_SIZE);
@@ -369,6 +398,9 @@ void file_upload(char* filepath, int sock) {
 		write_data(sock, buf, BUFFER_SIZE);
 	}
 
+	// Set file buffer for better I/O performance
+	setvbuf(fp, NULL, _IOFBF, BUFFER_SIZE);
+
 	fseek (fp, 0, SEEK_END);
 	uint32_t file_size = ftell(fp), len, size = 0;
 	int check = 0;
@@ -377,29 +409,37 @@ void file_upload(char* filepath, int sock) {
 	snprintf(buf, BUFFER_SIZE, "%d", file_size);
 	write_data(sock, buf, BUFFER_SIZE);
 
-	while(feof(fp) == 0) {
+	uint32_t last_progress = 0;
+	while(size < file_size && !feof(fp)) {
 		uint32_t writeable = (file_size - size) > BUFFER_SIZE ? BUFFER_SIZE : (file_size - size);
-		fread(buf, sizeof(char), writeable, fp);
-		if((len = write(sock, buf, writeable)) > 0) {
-			printf("Processing: %0.2lf%%\n", 100.0 * size / file_size);
-			size += len;
-			if(size == file_size) {
+		size_t read_bytes = fread(buf, 1, writeable, fp);
+		if(read_bytes > 0) {
+			if((len = write(sock, buf, read_bytes)) > 0) {
+				// Show progress less frequently for better performance
+				uint32_t progress = (size * 100) / file_size;
+				if(progress != last_progress && progress % 10 == 0) {
+					printf("Processing: %d%%\n", progress);
+					last_progress = progress;
+				}
+				size += len;
+			} else if (len == 0) {
 				check = 1;
 				break;
+			} else {
+				if(errno == EINTR) continue;
+				else break;
 			}
-		} else if (len == 0) {
-			check = 1;
-			break;
 		} else {
-			if(errno == EINTR) continue;
-			else break;
+			break;
 		}
 	}
 
-	if(check)
+	if(size == file_size) {
+		check = 1;
 		printf("Processing: 100%%\n");
-	else
+	} else {
 		printf("File Upload incomplete from unknown error\n");
+	}
 	printf("Upload File Size: %d bytes, File Path: %s\n", size, filepath);
 
 	fclose(fp);

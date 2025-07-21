@@ -12,14 +12,16 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <stdarg.h>
 #include <pwd.h> // username
 
-#define BUFSIZE 65535
-#define BUFFER_SIZE 1024
+// Optimized buffer sizes for better performance
+#define BUFSIZE 8192        // Reduced from 65535 for better memory usage
+#define BUFFER_SIZE 8192    // Increased from 1024 for better I/O throughput
 #define MAXSOCK 64
 #define MAXBACKLOG 4
 
@@ -36,10 +38,26 @@ int read_data(int sock, char* buffer, uint32_t required); // 도중에 signal �
 int write_data(int fd, const char *buffer, uint32_t required);
 void file_download(char* filepath, int sock);
 void file_upload(char* filepath, int sock);
+static inline void set_socket_options(int sock);
 
 // 전역변수 선언
 int servport;
 
+// Socket optimization function
+static inline void set_socket_options(int sock) {
+	int opt = 1;
+	int bufsize = 65536;
+	
+	// Enable TCP_NODELAY for lower latency
+	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+	
+	// Set send and receive buffer sizes
+	setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+	setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+	
+	// Enable socket reuse
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+}
 
 int main(int argc, char * argv[])
 {

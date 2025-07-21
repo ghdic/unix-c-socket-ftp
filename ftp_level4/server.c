@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -21,8 +22,9 @@
 #include <sys/sem.h>
 #include <pthread.h>
 
-#define BUFSIZE 65535
-#define BUFFER_SIZE 1024
+// Optimized buffer sizes for better performance
+#define BUFSIZE 8192        // Reduced from 65535 for better memory usage
+#define BUFFER_SIZE 8192    // Increased from 1024 for better I/O throughput
 #define MAXSOCK 64
 #define MAXBACKLOG 4
 
@@ -42,6 +44,7 @@ void file_download(char* filepath, int sock);
 void file_upload(char* filepath, int sock);
 void *command(void *data);
 void client_num_handler(int val);
+static inline void set_socket_options(int sock);
 
 struct info {
 	int clisock;
@@ -53,6 +56,21 @@ int servport, shmid, semid, *client_num;
 struct sembuf p_op = {0, -1, SEM_UNDO},
 			v_op = {0, 1, SEM_UNDO};
 
+// Socket optimization function
+static inline void set_socket_options(int sock) {
+	int opt = 1;
+	int bufsize = 65536;
+	
+	// Enable TCP_NODELAY for lower latency
+	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+	
+	// Set send and receive buffer sizes
+	setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+	setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+	
+	// Enable socket reuse
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+}
 
 int main(int argc, char * argv[]) {
 	int servsock, clisock, status;	//서버 소켓, 통신용 소켓 변수
@@ -83,6 +101,9 @@ int main(int argc, char * argv[]) {
 		exit(1);
 	}
 
+	// Socket optimization
+	set_socket_options(servsock);
+
 	// 서버 소켓 주소 구조체 정보
 	memset(&servaddr, 0x00, sizeof(servaddr));
 	servaddr.sin_family = AF_INET;
@@ -105,6 +126,10 @@ int main(int argc, char * argv[]) {
 		} else {
 			if(*client_num < MAXBACKLOG) {
 				printf("Client Sock connection %d\n", clisock);
+				
+				// Optimize client socket
+				set_socket_options(clisock);
+				
 				client_num_handler(1);
 				printf("현재 연결되어 있는 클라이언트 수: %d\n", *client_num);
 				struct info f;
@@ -219,10 +244,10 @@ int write_data(int fd, const char *buffer, uint32_t required) {
 	}
 }
 
-// client -> server
+// client -> server - Optimized version
 void file_download(char* filepath, int sock) {
 	FILE* fp;
-	char buf[BUFFER_SIZE] = {0x00, };
+	static char buf[BUFFER_SIZE];  // Static to avoid stack allocation
 	char *filename, *bp;
 
 	filename = strrchr(filepath, '/'); // '/'의 마지막 위치, 없으면 NULL반환 파일명만 빼냄
@@ -231,7 +256,7 @@ void file_download(char* filepath, int sock) {
 	else
 		filename = filename + 1;
 
-	if((fp = fopen(filename, "w")) == NULL) {
+	if((fp = fopen(filename, "wb")) == NULL) {  // Binary mode for better performance
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		write_data(sock, buf, BUFFER_SIZE);
 		return;
@@ -240,12 +265,16 @@ void file_download(char* filepath, int sock) {
 		write_data(sock, buf, BUFFER_SIZE);
 	}
 
+	// Set file buffer for better I/O performance
+	setvbuf(fp, NULL, _IOFBF, BUFFER_SIZE);
+
 	read_data(sock, buf, BUFFER_SIZE);
 	bp = strtok(buf, " ");
 	if(strcmp(bp, ":ERROR") == 0) {
+		fclose(fp);
 		remove(filename);
 		bp = strtok(NULL, "");
-		printf("%d %s %s\n", sock, buf, bp); // 이런식으로도 복구가능 ㅋㅋ(strtok 할때 사이에 \0 있기 때문)
+		printf("%d %s %s\n", sock, buf, bp);
 		return;
 	}
 
@@ -254,14 +283,14 @@ void file_download(char* filepath, int sock) {
 
 	sscanf(buf, "%d", &file_size);
 
-	while(1) {
+	while(size < file_size) {
 		uint32_t readable = (file_size - size) > BUFFER_SIZE ? BUFFER_SIZE : (file_size - size);
 		if((len = read(sock, buf, readable)) > 0) {
-			fwrite(buf, sizeof(char), len, fp);
-			size += len;
-			if(size == file_size) {
+			if(fwrite(buf, 1, len, fp) != len) {
+				fprintf(stderr, "Write error\n");
 				break;
 			}
+			size += len;
 		} else if(len == 0) {
 			break;
 		} else {
@@ -272,13 +301,13 @@ void file_download(char* filepath, int sock) {
 	fclose(fp);
 }
 
-// server -> client
+// server -> client - Optimized version
 void file_upload(char* filepath, int sock) {
 	FILE* fp;
-	char buf[BUFFER_SIZE] = {0x00, };
+	static char buf[BUFFER_SIZE];  // Static to avoid stack allocation
 	char* bp;
 
-	if((fp = fopen(filepath, "r")) == NULL) {
+	if((fp = fopen(filepath, "rb")) == NULL) {  // Binary mode for better performance
 		snprintf(buf, BUFFER_SIZE, ":ERROR %s", strerror(errno));
 		write_data(sock, buf, BUFFER_SIZE);
 		return;
@@ -287,11 +316,15 @@ void file_upload(char* filepath, int sock) {
 		write_data(sock, buf, BUFFER_SIZE);
 	}
 
+	// Set file buffer for better I/O performance
+	setvbuf(fp, NULL, _IOFBF, BUFFER_SIZE);
+
 	read_data(sock, buf, BUFFER_SIZE);
 	bp = strtok(buf, " ");
 	if(strcmp(bp, ":ERROR") == 0) {
 		bp = strtok(NULL, "");
 		printf("%d: %s %s\n", sock, buf, bp);
+		fclose(fp);
 		return;
 	}
 
@@ -302,18 +335,20 @@ void file_upload(char* filepath, int sock) {
 	snprintf(buf, BUFFER_SIZE, "%d", file_size);
 	write_data(sock, buf, BUFFER_SIZE);
 
-	while(feof(fp) == 0) {
+	while(size < file_size && !feof(fp)) {
 		uint32_t writeable = (file_size - size) > BUFFER_SIZE ? BUFFER_SIZE : (file_size - size);
-		fread(buf, sizeof(char), writeable, fp);
-		if((len = write(sock, buf, writeable)) > 0) {
-			size += len;
-			if(size == file_size)
+		size_t read_bytes = fread(buf, 1, writeable, fp);
+		if(read_bytes > 0) {
+			if((len = write(sock, buf, read_bytes)) > 0) {
+				size += len;
+			} else if (len == 0) {
 				break;
-		} else if (len == 0) {
-			break;
+			} else {
+				if(errno == EINTR) continue;
+				else break;
+			}
 		} else {
-			if(errno == EINTR) continue;
-			else break;
+			break;
 		}
 	}
 
@@ -321,8 +356,8 @@ void file_upload(char* filepath, int sock) {
 }
 
 void *command(void *data) {
-	char rxbuf[BUFSIZE] = {0,};	// 수신 저장
-	char txbuf[BUFSIZE] = {0,};	// 송신 저장
+	static __thread char rxbuf[BUFSIZE];    // Thread-local storage to avoid allocations
+	static __thread char txbuf[BUFSIZE];    // Thread-local storage to avoid allocations
 
 	struct info f = *((struct info *)data);
 
@@ -339,47 +374,56 @@ void *command(void *data) {
 			break;
 		}
 		else {
-			memset(txbuf, 0, BUFSIZE);
-			// ls 명령 
-			if(strncmp(rxbuf, "ls",2)==0) {
-				if(strcmp(rxbuf, "ls") == 0) {
-					ls(f.cpath, txbuf);
-				} else {
-					popen_handling(rxbuf, txbuf);
-				}
-				write_data(f.clisock, txbuf, BUFSIZE);
+			txbuf[0] = '\0';  // Faster than memset for clearing
+			
+			// Optimize command parsing with switch-like logic
+			switch(rxbuf[0]) {
+				case 'l':  // ls 명령 
+					if(strncmp(rxbuf, "ls", 2) == 0) {
+						if(rxbuf[2] == '\0') {
+							ls(f.cpath, txbuf);
+						} else {
+							popen_handling(rxbuf, txbuf);
+						}
+						write_data(f.clisock, txbuf, BUFSIZE);
+					}
+					break;
+				case 'c':  // cd 명령
+					if(strncmp(rxbuf, "cd", 2) == 0) {
+						char *path = rxbuf + 3;  // Skip "cd "
+						cd(path, f.cpath, txbuf);
+						write_data(f.clisock, txbuf, BUFSIZE);
+					}
+					break;
+				case 'g':  // get 명령
+					if(strncmp(rxbuf, "get", 3) == 0) {
+						char *file_path = rxbuf + 4;  // Skip "get "
+						file_upload(file_path, f.clisock);
+					}
+					break;
+				case 'p':  // put 명령
+					if(strncmp(rxbuf, "put", 3) == 0) {
+						char *file_path = rxbuf + 4;  // Skip "put "
+						file_download(file_path, f.clisock);
+					}
+					break;
+				case 'q':  // quit 명령 
+					if(strncmp(rxbuf, "quit", 4) == 0) {
+						printf("Quit: a client out \n");
+						goto cleanup;
+					}
+					break;
+				default:
+					printf("Illegal command \n");
+					break;
 			}
-			// cd 명령
-			else if(strncmp(rxbuf, "cd",2)==0) {
-				char path[BUFSIZE] = {'\0'};
-				sscanf(rxbuf, "cd %s", path);
-				cd(path, f.cpath, txbuf);
-				write_data(f.clisock, txbuf, BUFSIZE);
-			}
-			// get 명령
-			else if(strncmp(rxbuf, "get",3)==0) {
-				char * const sep_at = strchr(rxbuf, ' ');
-				char *file_path = sep_at + 1;
-				file_upload(file_path, f.clisock);
-			}
-			// put 명령
-			else if(strncmp(rxbuf, "put",3)==0) {
-				char * const sep_at = strchr(rxbuf, ' ');
-				char *file_path = sep_at + 1;
-				file_download(file_path, f.clisock);
-			}
-			// quit 명령 
-			else if(strncmp(rxbuf, "quit",4)==0) {
-				printf("Quit: a client out \n");
-				break;
-			}
-			// 허용 안되는 명령
-			else printf("Illegal command \n");
 		}
 	}
+cleanup:
 	close(f.clisock);
 	client_num_handler(-1);
 	printf("현재 연결되어 있는 클라이언트 수: %d\n", *client_num);
+	return NULL;
 }
 
 void client_num_handler(int val) {
